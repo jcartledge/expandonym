@@ -1,0 +1,83 @@
+<?php
+// $Id$
+
+define ('EXPANDONYM_TEMP_REPLACEMENT', '###space###');
+
+function expandonym_filter_tips($delta, $format, $long = FALSE) {
+  return t('Wrap acronyms with definitions in <acronym> tags');
+}
+
+function expandonym_filter($op, $delta = 0, $format = -1, $text = '', $cache_id = 0) {
+  switch ($op) {
+    case 'list':
+      return array(t('Expandonym filter'));
+    case 'description':
+      return t('Wrap acronyms with definitions in <acronym> tags');
+    case 'prepare':
+      return $text;
+    case 'process':
+      return _expandonym_process($text);
+    case 'settings':
+      return _expandonym_settings();
+  }
+}
+
+function _expandonym_settings() {
+  $form['Expandonym'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Expandonym filter'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+  );
+  $form['Expandonym']["expandonym_acronyms"] = array(
+    '#type' => 'textarea',
+    '#title' => t('Acronyms and expansions'),
+    '#default_value' => variable_get('expandonym_acronyms', ''),
+    '#description' => t('One per line - [acronym] [definition]'),
+    '#required' => TRUE,
+  );
+  return $form;
+}
+
+function _expandonym_process($html = '') {
+  if (!$html) return $html;
+  $html = preg_replace_callback (',<[^>]+>,',
+    '_expandonym_remove_spaces', $html);              // <-- temp removal of white spaces in html
+  $html = preg_replace_callback (',\b[\w]+\b,',
+    '_expandonym_check_word', $html);                 // <-- check remaining words for acronyms
+  $html = preg_replace_callback (',<abbr[^>]+>\s*<abbr[^>]+>([^<]+)</abbr>\s?</abbr>,',
+    '_expandonym_check_word', $html);                 // <-- safty check for double acronym tags
+  $html = str_replace(EXPANDONYM_TEMP_REPLACEMENT, ' ', $html); // <-- put the spaces back in the html
+  return $html;
+}
+
+function _expandonym_load_acronyms() {
+  $acronyms = array();
+  $acronyms_unindexed = explode(PHP_EOL, variable_get('expandonym_acronyms', ''));
+  foreach($acronyms_unindexed as $acronym) {
+    list($key, $acronym) = explode(' ', $acronym, 2);
+    $acronyms[$key] = $acronym;
+  }
+  return $acronyms;
+}
+
+function _expandonym_check_word($word){
+  static $acronyms, $keys, $expanded;
+  if(is_null($acronyms)) $acronyms = _expandonym_load_acronyms();
+  if(is_null($keys)) $keys = array_keys($acronyms);
+  if(is_null($expanded)) $expanded = array();
+  $key = array_pop($word);
+  if(in_array($key, $keys)){
+    $class_name = isset($expanded[$key]) ? 'initialism' : 'tooltip initialism'; //only make the first instance a tooltip
+    $expanded[$key] = true;
+    $key = sprintf('<abbr class="%s" title="%s">%s</abbr>',
+      $class_name,
+      $acronyms[$key],
+      $key);
+  }
+  return $key;
+}
+
+function _expandonym_remove_spaces($value){
+  return preg_replace('/\s/', EXPANDONYM_TEMP_REPLACEMENT, array_pop($value));
+}

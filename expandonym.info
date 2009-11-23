@@ -1,0 +1,6 @@
+; $Id$
+name = Expandonym
+description = Wrap acronyms with definitions in <acronym> tags
+core = 6.x
+dependencies[] = filter
+package = "Other"
