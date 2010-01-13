@@ -1,14 +1,12 @@
 <?php
 // $Id$
 
-define ('EXPANDONYM_TEMP_REPLACEMENT', '###space###');
-
 function expandonym_filter_tips($delta, $format, $long = FALSE) {
   return t('Wrap acronyms with definitions in <acronym> tags');
 }
 
 function expandonym_filter($op, $delta = 0, $format = -1, $text = '', $cache_id = 0) {
-  switch ($op) {
+  if(_expandonym_by_type()) switch ($op) {
     case 'list':
       return array(t('Expandonym filter'));
     case 'description':
@@ -36,24 +34,66 @@ function _expandonym_settings() {
     '#description' => t('One per line - [acronym] [definition]'),
     '#required' => TRUE,
   );
+  $form['Expandonym']['expandonym_exclude_content_types'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Content types to exclude'),
+    '#options' => node_get_types('names'),
+    '#default_value' => variable_get('expandonym_exclude_content_types', array()),
+    '#description' => t("Specify which content types to exclude when performing acronym expansion"),
+  );
   return $form;
 }
 
 function _expandonym_process($html = '') {
   if (!$html) return $html;
-  $html = preg_replace_callback (',<[^>]+>,',
-    '_expandonym_remove_spaces', $html);              // <-- temp removal of white spaces in html
-  $html = preg_replace_callback (',\b[\w]+\b,',
-    '_expandonym_check_word', $html);                 // <-- check remaining words for acronyms
-  $html = preg_replace_callback (',<abbr[^>]+>\s*<abbr[^>]+>([^<]+)</abbr>\s?</abbr>,',
-    '_expandonym_check_word', $html);                 // <-- safty check for double acronym tags
-  $html = str_replace(EXPANDONYM_TEMP_REPLACEMENT, ' ', $html); // <-- put the spaces back in the html
-  return $html;
+  $acronyms = _expandonym_load_acronyms();
+  $matched = array();
+  $dom = new DOMDocument('1.0', 'UTF-8');
+  $dom->preserveWhiteSpace = FALSE;
+  $dom->formatOutput = FALSE;
+  $dom->recover = TRUE;
+  try {
+    @$dom->loadHTML("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/></head><body>{$html}</body></html>");
+  } catch (Exception $e) {
+    return $html;
+  }
+  $xpath = new DOMXPath($dom);
+  $text_nodes = $xpath->evaluate('//text()[name(..)!="abbr"][name(..)!="acronym"][name(..)!="h2"]');
+  $re = '/\b([A-Z]+)\b/';
+  foreach($text_nodes as $text_node) {
+    $parent = $text_node->parentNode;
+    if($parent) {
+      $next = $text_node->nextSibling;
+      $parent->removeChild($text_node);
+      $text = $text_node->nodeValue;
+      $texts = preg_split($re, $text, null, PREG_SPLIT_DELIM_CAPTURE);
+      foreach($texts as $text) {
+        if(isset($acronyms[$text])) {
+          $abbr = $dom->createElement('abbr');
+          $abbr->setAttribute('title', $acronyms[$text]);
+          $class_name = 'initialism';
+          if(!isset($matched[$text])) {
+            $matched[$text] = $text;
+            $class_name .= ' tooltip';
+          }
+          $abbr->setAttribute('class', $class_name);
+          $abbr->appendChild($dom->createTextNode($text));
+          $next ? $parent->insertBefore($abbr, $next) : $parent->appendChild($abbr);
+        } else {
+          $text = $dom->createTextNode($text);
+          $next ? $parent->insertBefore($text, $next) : $parent->appendChild($text);
+        }
+      }
+    }
+  }
+  $full_doc = $dom->saveHTML();
+  preg_match(',<body>(.*)</body>,msu', $full_doc, $matches);
+  return $matches[1];
 }
 
 function _expandonym_load_acronyms() {
   $acronyms = array();
-  $acronyms_unindexed = explode(PHP_EOL, variable_get('expandonym_acronyms', ''));
+  $acronyms_unindexed = explode("\n", variable_get('expandonym_acronyms', ''));
   foreach($acronyms_unindexed as $acronym) {
     list($key, $acronym) = explode(' ', $acronym, 2);
     $acronyms[$key] = $acronym;
@@ -61,23 +101,10 @@ function _expandonym_load_acronyms() {
   return $acronyms;
 }
 
-function _expandonym_check_word($word){
-  static $acronyms, $keys, $expanded;
-  if(is_null($acronyms)) $acronyms = _expandonym_load_acronyms();
-  if(is_null($keys)) $keys = array_keys($acronyms);
-  if(is_null($expanded)) $expanded = array();
-  $key = array_pop($word);
-  if(in_array($key, $keys)){
-    $class_name = isset($expanded[$key]) ? 'initialism' : 'tooltip initialism'; //only make the first instance a tooltip
-    $expanded[$key] = true;
-    $key = sprintf('<abbr class="%s" title="%s">%s</abbr>',
-      $class_name,
-      $acronyms[$key],
-      $key);
-  }
-  return $key;
-}
-
-function _expandonym_remove_spaces($value){
-  return preg_replace('/\s/', EXPANDONYM_TEMP_REPLACEMENT, array_pop($value));
+function _expandonym_by_type() {
+  $excluded_types = array_filter(variable_get('expandonym_exclude_content_types', array()));
+  if(!preg_match('@node/([\d]+).*@', $_GET['q'], $matches)) return true;
+  $nid = array_pop($matches);
+  $type = db_result(db_query('SELECT `type` FROM {node} WHERE `nid`=%d', $nid));
+  return !in_array($type, $excluded_types);
 }
